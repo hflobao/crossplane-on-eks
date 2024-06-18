@@ -87,7 +87,7 @@ spec:
                 toFieldPath: status.eks.internetGatewayId
                 type: ToCompositeFieldPath
 
-          {{ range $i, $cidr := .Values.networking.publicSubnetCidrs -}}
+          {{- range $i, $cidr := .Values.networking.publicSubnetCidrs }}
           - name: publicSubnet{{ $i }}
             base:
               apiVersion: ec2.aws.upbound.io/v1beta1
@@ -353,7 +353,7 @@ spec:
                 policy:
                   fromFieldPath: Required
 
-          {{ range $i, $cidr := .Values.networking.privateSubnetCidrs -}}
+          {{ range $i, $cidr := .Values.networking.privateSubnetCidrs }}
           - name: privateRouteTableAssociation{{ $i }}
             base:
               apiVersion: ec2.aws.upbound.io/v1beta1
