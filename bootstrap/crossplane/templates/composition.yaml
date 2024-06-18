@@ -1255,7 +1255,7 @@ spec:
                         - system:bootstrappers
                         - system:nodes
                         rolearn: %s
-                        username: system:node:{{EC2PrivateDNSName}}
+                        username: system:node:{{ "{{EC2PrivateDNSName}}" }}
                       - groups:
                         - system:masters
                         rolearn: %s
