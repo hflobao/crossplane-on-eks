@@ -67,7 +67,7 @@ spec:
                 toFieldPath: status.eks.vpcId
                 type: ToCompositeFieldPath
 
-          {{ if .Values.networking.createPublicSubnets -}}
+          {{- if .Values.networking.createPublicSubnets }}
           - name: internetGateway
             base:
               apiVersion: ec2.aws.upbound.io/v1beta1
@@ -87,7 +87,7 @@ spec:
                 toFieldPath: status.eks.internetGatewayId
                 type: ToCompositeFieldPath
 
-          {{- range $i, $cidr := .Values.networking.publicSubnetCidrs }}
+          {{ range $i, $cidr := .Values.networking.publicSubnetCidrs -}}
           - name: publicSubnet{{ $i }}
             base:
               apiVersion: ec2.aws.upbound.io/v1beta1
@@ -132,7 +132,7 @@ spec:
                   mergeOptions:
                     appendSlice: true
                     keepMapValues: true
-          {{- end }}
+          {{ end -}}
 
           - name: publicRouteTable
             base:
@@ -209,10 +209,10 @@ spec:
                 type: FromCompositeFieldPath
                 policy:
                   fromFieldPath: Required
-          {{- end }}
+          {{ end -}}
           {{- end }}
 
-          {{ if and .Values.networking.createPrivateSubnets .Values.networking.createPublicSubnets -}}
+          {{- if and .Values.networking.createPrivateSubnets .Values.networking.createPublicSubnets }}
           {{ range $i, $cidr := .Values.networking.privateSubnetCidrs -}}
           - name: privateSubnet{{ $i }}
             base:
@@ -258,9 +258,9 @@ spec:
                   mergeOptions:
                     appendSlice: true
                     keepMapValues: true
-          {{- end }}
+          {{ end -}}
 
-          {{ if .Values.networking.singleNatGateway -}}
+          {{- if .Values.networking.singleNatGateway }}
           - name: privateElasticIp
             base:
               apiVersion: ec2.aws.upbound.io/v1beta1
@@ -353,7 +353,7 @@ spec:
                 policy:
                   fromFieldPath: Required
 
-          {{ range $i, $cidr := .Values.networking.privateSubnetCidrs }}
+          {{ range $i, $cidr := .Values.networking.privateSubnetCidrs -}}
           - name: privateRouteTableAssociation{{ $i }}
             base:
               apiVersion: ec2.aws.upbound.io/v1beta1
@@ -375,7 +375,7 @@ spec:
                 type: FromCompositeFieldPath
                 policy:
                   fromFieldPath: Required
-          {{- end }}
+          {{ end -}}
 
           {{- else }}
 
@@ -499,6 +499,8 @@ spec:
           {{- end }}
           {{- end }}
           {{- end }}
+
+
 
           - name: clusterRole
             base:
@@ -2166,7 +2168,7 @@ spec:
                       type: Format
                     type: string
                 type: FromCompositeFieldPath
-          {{- end }}
+          {{ end -}}
 
           - name: crossplaneUpjetProviderConfig
             base:
@@ -2189,7 +2191,7 @@ spec:
                 type: FromCompositeFieldPath
           {{- end }}
 
-          {{ if .Values.providerKubernetes.enabled -}}
+          {{- if .Values.providerKubernetes.enabled }}
           - name: crossplaneKubernetesProviderServiceAccount
             base:
               apiVersion: kubernetes.crossplane.io/v1alpha2
@@ -2309,7 +2311,7 @@ spec:
                 type: FromCompositeFieldPath
           {{- end }}
 
-          {{ if .Values.providerHelm.enabled -}}
+          {{- if .Values.providerHelm.enabled }}
           - name: crossplaneHelmProviderServiceAccount
             base:
               apiVersion: kubernetes.crossplane.io/v1alpha2
@@ -2429,7 +2431,7 @@ spec:
                 type: FromCompositeFieldPath
           {{- end }}
 
-          {{ if .Values.argocd.enabled -}}
+          {{- if .Values.argocd.enabled }}
           - name: argoCdAddon
             base:
               apiVersion: helm.crossplane.io/v1beta1
