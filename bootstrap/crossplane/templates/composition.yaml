@@ -1,14 +1,14 @@
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
-  name: xeks.awsblueprints.io
+  name: xeks.{{ .Values.apiGroup }}
   labels:
     provider: aws
     function: patch-and-transform
 spec:
   writeConnectionSecretsToNamespace: crossplane-system
   compositeTypeRef:
-    apiVersion: awsblueprints.io/v1alpha1
+    apiVersion: {{ .Values.apiGroup }}/{{ .Values.apiVersion }}
     kind: XEks
   mode: Pipeline
   pipeline:
@@ -39,6 +39,467 @@ spec:
                 fromFieldPath: spec.parameters.region
                 toFieldPath: spec.forProvider.region
         resources:
+          {{- if .Values.networking.createVpc }}
+          - name: vpc
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: VPC
+              metadata:
+                labels:
+                  vpc: crossplane
+              spec:
+                forProvider:
+                  cidrBlock: ""
+                  enableDnsSupport: true
+                  enableDnsHostnames: true
+                  tags:
+                    - key: Name
+                      value: Crossplane-VPC
+            patches:
+              - type: PatchSet
+                patchSetName: common-parameters-regional
+              - fromFieldPath: spec.parameters.vpcCidr
+                toFieldPath: spec.forProvider.cidrBlock
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+              - fromFieldPath: status.atProvider.id
+                toFieldPath: status.eks.vpcId
+                type: ToCompositeFieldPath
+
+          {{ if .Values.networking.createPublicSubnets -}}
+          - name: internetGateway
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: InternetGateway
+              spec:
+                forProvider:
+                  vpcId: ""
+            patches:
+              - type: PatchSet
+                patchSetName: common-parameters-regional
+              - fromFieldPath: status.eks.vpcId
+                toFieldPath: spec.forProvider.vpcId
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+              - fromFieldPath: status.atProvider.id
+                toFieldPath: status.eks.internetGatewayId
+                type: ToCompositeFieldPath
+
+          {{ range $i, $cidr := .Values.networking.publicSubnetCidrs -}}
+          - name: publicSubnet{{ $i }}
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: Subnet
+              spec:
+                forProvider:
+                  availabilityZone: ""
+                  cidrBlock: ""
+                  vpcId: ""
+                  tags:
+                    - key: kubernetes.io/role/elb
+                      value: 1
+            patches:
+              - type: PatchSet
+                patchSetName: common-parameters-regional
+              - fromFieldPath: status.eks.vpcId
+                toFieldPath: spec.forProvider.vpcId
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+              - fromFieldPath: spec.parameters.publicSubnet{{ $i }}Cidr
+                toFieldPath: spec.forProvider.cidrBlock
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+              - combine:
+                  strategy: string
+                  string:
+                    fmt: "%s%s"
+                  variables:
+                    - fromFieldPath: spec.parameters.region
+                    - fromFieldPath: spec.parameters.publicSubnet{{ $i }}Az
+                toFieldPath: spec.forProvider.availabilityZone
+                type: CombineFromComposite
+              - fromFieldPath: status.atProvider.id
+                toFieldPath: status.eks.publicSubnet{{ $i }}Id
+                type: ToCompositeFieldPath
+              - fromFieldPath: status.atProvider.id
+                toFieldPath: status.eks.publicSubnets
+                type: ToCompositeFieldPath
+                policy:
+                  mergeOptions:
+                    appendSlice: true
+                    keepMapValues: true
+          {{- end }}
+
+          - name: publicRouteTable
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: RouteTable
+              spec:
+                forProvider:
+                  vpcId: ""
+            patches:
+              - type: PatchSet
+                patchSetName: common-parameters-regional
+              - fromFieldPath: status.eks.vpcId
+                toFieldPath: spec.forProvider.vpcId
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+              - fromFieldPath: status.atProvider.id
+                toFieldPath: status.eks.publicRouteTableId
+                type: ToCompositeFieldPath
+
+          - name: publicDefaultRoute
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta2
+              kind: Route
+              spec:
+                forProvider:
+                  destinationCidrBlock: 0.0.0.0/0
+                  gatewayId: ""
+            patches:
+              - type: PatchSet
+                patchSetName: common-parameters-regional
+              - fromFieldPath: status.eks.internetGatewayId
+                toFieldPath: spec.forProvider.gatewayId
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+
+          - name: publicLocalVpcRoute
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta2
+              kind: Route
+              spec:
+                forProvider:
+                  destinationCidrBlock: ""
+                  gatewayId: local
+            patches:
+              - type: PatchSet
+                patchSetName: common-parameters-regional
+              - fromFieldPath: spec.parameters.vpcCidr
+                toFieldPath: spec.forProvider.destinationCidrBlock
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+
+          {{ range $i, $cidr := .Values.networking.publicSubnetCidrs -}}
+          - name: publicRouteTableAssociation{{ $i }}
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: RouteTableAssociation
+              spec:
+                forProvider:
+                  routeTableId: ""
+                  subnetId: ""
+            patches:
+              - type: PatchSet
+                patchSetName: common-parameters-regional
+              - fromFieldPath: status.eks.publicRouteTableId
+                toFieldPath: spec.forProvider.routeTableId
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+              - fromFieldPath: status.eks.publicSubnet{{ $i }}Id
+                toFieldPath: spec.forProvider.subnetId
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+          {{- end }}
+          {{- end }}
+
+          {{ if and .Values.networking.createPrivateSubnets .Values.networking.createPublicSubnets -}}
+          {{ range $i, $cidr := .Values.networking.privateSubnetCidrs -}}
+          - name: privateSubnet{{ $i }}
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: Subnet
+              spec:
+                forProvider:
+                  availabilityZone: ""
+                  cidrBlock: ""
+                  vpcId: ""
+                  tags:
+                    - key: kubernetes.io/role/internal-elb
+                      value: 1
+            patches:
+              - type: PatchSet
+                patchSetName: common-parameters-regional
+              - fromFieldPath: status.eks.vpcId
+                toFieldPath: spec.forProvider.vpcId
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+              - fromFieldPath: spec.parameters.privateSubnet{{ $i }}Cidr
+                toFieldPath: spec.forProvider.cidrBlock
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+              - combine:
+                  strategy: string
+                  string:
+                    fmt: "%s%s"
+                  variables:
+                    - fromFieldPath: spec.parameters.region
+                    - fromFieldPath: spec.parameters.privateSubnet{{ $i }}Az
+                toFieldPath: spec.forProvider.availabilityZone
+                type: CombineFromComposite
+              - fromFieldPath: status.atProvider.id
+                toFieldPath: status.eks.privateSubnet{{ $i }}Id
+                type: ToCompositeFieldPath
+              - fromFieldPath: status.atProvider.id
+                toFieldPath: status.eks.privateSubnets
+                type: ToCompositeFieldPath
+                policy:
+                  mergeOptions:
+                    appendSlice: true
+                    keepMapValues: true
+          {{- end }}
+
+          {{ if .Values.networking.singleNatGateway -}}
+          - name: privateElasticIp
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: EIP
+              spec:
+                forProvider:
+                  vpc: true
+            patches:
+              - type: PatchSet
+                patchSetName: common-parameters-regional
+              - fromFieldPath: status.atProvider.id
+                toFieldPath: status.eks.elasticIpId
+                type: ToCompositeFieldPath
+
+          - name: privateNatGateway
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: NATGateway
+              spec:
+                forProvider:
+                  allocationId: ""
+                  subnetId: ""
+            patches:
+              - type: PatchSet
+                patchSetName: common-parameters-regional
+              - fromFieldPath: status.eks.elasticIpId
+                toFieldPath: spec.forProvider.allocationId
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+              - fromFieldPath: status.eks.publicSubnet0Id
+                toFieldPath: spec.forProvider.subnetId
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+              - fromFieldPath: status.atProvider.id
+                toFieldPath: status.eks.natGatewayId
+                type: ToCompositeFieldPath
+
+          - name: privateRouteTable
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: RouteTable
+              spec:
+                forProvider:
+                  vpcId: ""
+            patches:
+              - type: PatchSet
+                patchSetName: common-parameters-regional
+              - fromFieldPath: status.eks.vpcId
+                toFieldPath: spec.forProvider.vpcId
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+              - fromFieldPath: status.atProvider.id
+                toFieldPath: status.eks.privateRouteTableId
+                type: ToCompositeFieldPath
+
+          - name: privateDefaultRoute
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta2
+              kind: Route
+              spec:
+                forProvider:
+                  destinationCidrBlock: 0.0.0.0/0
+                  natGatewayId: ""
+            patches:
+              - type: PatchSet
+                patchSetName: common-parameters-regional
+              - fromFieldPath: status.eks.natGatewayId
+                toFieldPath: spec.forProvider.natGatewayId
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+
+          - name: privateLocalVpcRoute
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta2
+              kind: Route
+              spec:
+                forProvider:
+                  destinationCidrBlock: ""
+                  gatewayId: local
+            patches:
+              - type: PatchSet
+                patchSetName: common-parameters-regional
+              - fromFieldPath: spec.parameters.vpcCidr
+                toFieldPath: spec.forProvider.destinationCidrBlock
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+
+          {{ range $i, $cidr := .Values.networking.privateSubnetCidrs -}}
+          - name: privateRouteTableAssociation{{ $i }}
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: RouteTableAssociation
+              spec:
+                forProvider:
+                  routeTableId: ""
+                  subnetId: ""
+            patches:
+              - type: PatchSet
+                patchSetName: common-parameters-regional
+              - fromFieldPath: status.eks.privateRouteTableId
+                toFieldPath: spec.forProvider.routeTableId
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+              - fromFieldPath: status.eks.privateSubnet{{ $i }}Id
+                toFieldPath: spec.forProvider.subnetId
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+          {{- end }}
+
+          {{- else }}
+
+          {{ range $i, $cidr := .Values.networking.publicSubnetCidrs -}}
+          - name: privateElasticIp{{ $i }}
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: EIP
+              spec:
+                forProvider:
+                  vpc: true
+            patches:
+              - type: PatchSet
+                patchSetName: common-parameters-regional
+              - fromFieldPath: status.atProvider.id
+                toFieldPath: status.eks.elasticIp{{ $i }}Id
+                type: ToCompositeFieldPath
+
+          - name: privateNatGateway{{ $i }}
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: NATGateway
+              spec:
+                forProvider:
+                  allocationId: ""
+                  subnetId: ""
+            patches:
+              - type: PatchSet
+                patchSetName: common-parameters-regional
+              - fromFieldPath: status.eks.elasticIp{{ $i }}Id
+                toFieldPath: spec.forProvider.allocationId
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+              - fromFieldPath: status.eks.publicSubnet{{ $i }}Id
+                toFieldPath: spec.forProvider.subnetId
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+              - fromFieldPath: status.atProvider.id
+                toFieldPath: status.eks.natGateway{{ $i }}Id
+                type: ToCompositeFieldPath
+
+          - name: privateRouteTable{{ $i }}
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: RouteTable
+              spec:
+                forProvider:
+                  vpcId: ""
+            patches:
+              - type: PatchSet
+                patchSetName: common-parameters-regional
+              - fromFieldPath: status.eks.vpcId
+                toFieldPath: spec.forProvider.vpcId
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+              - fromFieldPath: status.atProvider.id
+                toFieldPath: status.eks.privateRouteTable{{ $i }}Id
+                type: ToCompositeFieldPath
+
+          - name: privateDefaultRoute{{ $i }}
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta2
+              kind: Route
+              spec:
+                forProvider:
+                  destinationCidrBlock: 0.0.0.0/0
+                  natGatewayId: ""
+            patches:
+              - type: PatchSet
+                patchSetName: common-parameters-regional
+              - fromFieldPath: status.eks.natGateway{{ $i }}Id
+                toFieldPath: spec.forProvider.natGatewayId
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+
+          - name: privateLocalVpcRoute{{ $i }}
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta2
+              kind: Route
+              spec:
+                forProvider:
+                  destinationCidrBlock: ""
+                  gatewayId: local
+            patches:
+              - type: PatchSet
+                patchSetName: common-parameters-regional
+              - fromFieldPath: spec.parameters.vpcCidr
+                toFieldPath: spec.forProvider.destinationCidrBlock
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+          {{- end }}
+
+          {{ range $i, $cidr := .Values.networking.privateSubnetCidrs -}}
+          - name: privateRouteTableAssociation{{ $i }}
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: RouteTableAssociation
+              spec:
+                forProvider:
+                  routeTableId: ""
+                  subnetId: ""
+            patches:
+              - type: PatchSet
+                patchSetName: common-parameters-regional
+              - fromFieldPath: status.eks.privateRouteTable{{ $i }}Id
+                toFieldPath: spec.forProvider.routeTableId
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+              - fromFieldPath: status.eks.privateSubnet{{ $i }}Id
+                toFieldPath: spec.forProvider.subnetId
+                type: FromCompositeFieldPath
+                policy:
+                  fromFieldPath: Required
+          {{- end }}
+          {{- end }}
+          {{- end }}
+          {{- end }}
+
           - name: clusterRole
             base:
               apiVersion: iam.aws.upbound.io/v1beta1
@@ -64,8 +525,8 @@ spec:
             patches:
               - type: PatchSet
                 patchSetName: common-parameters-global
-              - fromFieldPath: "status.atProvider.arn"
-                toFieldPath: "status.eks.clusterRoleArn"
+              - fromFieldPath: status.atProvider.arn
+                toFieldPath: status.eks.clusterRoleArn
                 type: ToCompositeFieldPath
               - fromFieldPath: status.atProvider.arn
                 policy:
@@ -1200,6 +1661,7 @@ spec:
                 toFieldPath: "status.eks.awsLoadBalancerControllerReleaseStatus"
                 type: ToCompositeFieldPath
 
+          {{ if .Values.prometheus.enabled -}}
           - name: prometheusStackAddon
             base:
               apiVersion: helm.crossplane.io/v1beta1
@@ -1210,10 +1672,10 @@ spec:
               spec:
                 forProvider:
                   chart:
-                    name: kube-prometheus-stack
+                    name: {{ .Values.prometheus.name }}
                     repository: https://prometheus-community.github.io/helm-charts
-                    version: 51.2.0
-                  namespace: kube-prometheus-stack
+                    version: {{ .Values.prometheus.version }}
+                  namespace: {{ .Values.prometheus.namespace }}
                   values:
                     global:
                       rbac:
@@ -1307,10 +1769,10 @@ spec:
               spec:
                 forProvider:
                   chart:
-                    name: prometheus-adapter
+                    name: {{ .Values.prometheus.prometheusAdapter.name }}
                     repository: https://prometheus-community.github.io/helm-charts
-                    version: 4.10.0
-                  namespace: prometheus-adapter
+                    version: {{ .Values.prometheus.prometheusAdapter.version }}
+                  namespace: {{ .Values.prometheus.prometheusAdapter.namespace }}
                   values:
                     image:
                       pullPolicy: IfNotPresent
@@ -1447,6 +1909,7 @@ spec:
                 type: FromCompositeFieldPath
                 policy:
                   fromFieldPath: Required
+          {{- end }}
 
           - name: crossplaneAddon
             base:
@@ -1460,11 +1923,11 @@ spec:
                   chart:
                     name: crossplane
                     repository: https://charts.crossplane.io/stable
-                    version: 1.16.0
-                  namespace: crossplane-system
+                    version: {{ .Values.crossplane.version }}
+                  namespace: {{ .Values.crossplane.namespace }}
                   values:
-                    cluster_role: "cluster-admin"
-                    service_account: "crossplane"
+                    cluster_role: cluster-admin
+                    service_account: {{ .Values.crossplane.serviceAccount }}
                     args:
                       - "--enable-environment-configs"
                     metrics:
@@ -1505,11 +1968,11 @@ spec:
                     apiVersion: rbac.authorization.k8s.io/v1
                     kind: ClusterRoleBinding
                     metadata:
-                      name: crossplane-cluster-admin-binding
+                      name: {{ .Values.crossplane.name }}-binding
                     subjects:
                       - kind: ServiceAccount
-                        name: crossplane
-                        namespace: crossplane-system
+                        name: {{ .Values.crossplane.serviceAccount }}
+                        namespace: {{ .Values.crossplane.namespace }}
                     roleRef:
                       kind: ClusterRole
                       name: cluster-admin
@@ -1607,6 +2070,7 @@ spec:
               - type: PatchSet
                 patchSetName: common-parameters-global
 
+          {{ if .Values.providerUpboundAws.enabled -}}
           - name: crossplaneUpjetProviderRuntimeConfig
             base:
               apiVersion: kubernetes.crossplane.io/v1alpha2
@@ -1618,7 +2082,7 @@ spec:
                     apiVersion: pkg.crossplane.io/v1beta1
                     kind: DeploymentRuntimeConfig
                     metadata:
-                      name: upjet-aws-runtime-config
+                      name: {{ .Values.providerUpboundAws.name }}-runtime-config
                     spec:
                       deploymentTemplate:
                         spec:
@@ -1655,11 +2119,11 @@ spec:
                     apiVersion: pkg.crossplane.io/v1
                     kind: Provider
                     metadata:
-                      name: provider-upjet-aws
+                      name: provider-{{ .Values.providerUpboundAws.name }}
                     spec:
                       package: ""
                       runtimeConfigRef:
-                        name: upjet-aws-runtime-config
+                        name: {{ .Values.providerUpboundAws.name }}-runtime-config
             patches:
               - fromFieldPath: spec.parameters.id
                 toFieldPath: spec.providerConfigRef.name
@@ -1673,32 +2137,595 @@ spec:
                     type: string
                 type: FromCompositeFieldPath
 
-          # - name: crossplaneUpjetAwsProvider
-          #   base:
-          #     apiVersion: kubernetes.crossplane.io/v1alpha2
-          #     kind: Object
-          #     spec:
-          #       deletionPolicy: Orphan
-          #       forProvider:
-          #         manifest:
-          #           apiVersion: pkg.crossplane.io/v1
-          #           kind: Provider
-          #           metadata:
-          #             name: provider-upjet-aws
-          #           spec:
-          #             package: ""
-          #             runtimeConfigRef:
-          #               name: upjet-aws-runtime-config
-          #   patches:
-          #     - fromFieldPath: spec.parameters.id
-          #       toFieldPath: spec.providerConfigRef.name
-          #       type: FromCompositeFieldPath
-          #     - fromFieldPath: spec.parameters.upjetProviderVersion
-          #       toFieldPath: spec.forProvider.manifest.spec.package
-          #       transforms:
-          #         - string:
-          #             fmt: "xpkg.upbound.io/upbound/provider-family-aws:%s"
-          #             type: Format
-          #           type: string
-          #       type: FromCompositeFieldPath
+          {{ range .Values.providerUpboundAws.families -}}
+          - name: crossplaneUpjetAws{{ . | title }}Provider
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                deletionPolicy: Orphan
+                forProvider:
+                  manifest:
+                    apiVersion: pkg.crossplane.io/v1
+                    kind: Provider
+                    metadata:
+                      name: provider-upjet-aws-{{ . }}
+                    spec:
+                      package: ""
+                      runtimeConfigRef:
+                        name: upjet-aws-runtime-config
+            patches:
+              - fromFieldPath: spec.parameters.id
+                toFieldPath: spec.providerConfigRef.name
+                type: FromCompositeFieldPath
+              - fromFieldPath: spec.parameters.upjetProviderVersion
+                toFieldPath: spec.forProvider.manifest.spec.package
+                transforms:
+                  - string:
+                      fmt: "xpkg.upbound.io/upbound/provider-aws-{{ . }}:%s"
+                      type: Format
+                    type: string
+                type: FromCompositeFieldPath
+          {{- end }}
 
+          - name: crossplaneUpjetProviderConfig
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                deletionPolicy: Orphan
+                forProvider:
+                  manifest:
+                    apiVersion: aws.upbound.io/v1beta1
+                    kind: ProviderConfig
+                    metadata:
+                      name: upjet-aws-provider-config
+                    spec:
+                      credentials:
+                        source: IRSA
+            patches:
+              - fromFieldPath: spec.parameters.id
+                toFieldPath: spec.providerConfigRef.name
+                type: FromCompositeFieldPath
+          {{- end }}
+
+          {{ if .Values.providerKubernetes.enabled -}}
+          - name: crossplaneKubernetesProviderServiceAccount
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                deletionPolicy: Orphan
+                forProvider:
+                  manifest:
+                    apiVersion: v1
+                    kind: ServiceAccount
+                    metadata:
+                      name: {{ .Values.providerKubernetes.serviceAccount }}
+                      namespace: {{ .Values.crossplane.namespace }}
+            patches:
+              - fromFieldPath: spec.parameters.id
+                toFieldPath: spec.providerConfigRef.name
+                type: FromCompositeFieldPath
+
+          - name: crossplaneKubernetesProviderClusterRoleBinding
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                deletionPolicy: Orphan
+                forProvider:
+                  manifest:
+                    apiVersion: rbac.authorization.k8s.io/v1
+                    kind: ClusterRoleBinding
+                    metadata:
+                      name: {{ .Values.providerKubernetes.name }}-binding
+                    subjects:
+                      - kind: ServiceAccount
+                        name: {{ .Values.providerKubernetes.serviceAccount }}
+                        namespace: {{ .Values.crossplane.namespace }}
+                    roleRef:
+                      kind: ClusterRole
+                      name: cluster-admin
+                      apiGroup: rbac.authorization.k8s.io
+            patches:
+              - fromFieldPath: spec.parameters.id
+                toFieldPath: spec.providerConfigRef.name
+                type: FromCompositeFieldPath
+
+          - name: crossplaneKubernetesProviderRuntimeConfig
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                deletionPolicy: Orphan
+                forProvider:
+                  manifest:
+                    apiVersion: pkg.crossplane.io/v1beta1
+                    kind: DeploymentRuntimeConfig
+                    metadata:
+                      name: {{ .Values.providerKubernetes.name }}-runtime-config
+                    spec:
+                      deploymentTemplate:
+                        spec:
+                          replicas: 1
+                          selector: {}
+                          template: {}
+                      serviceAccountTemplate:
+                        metadata:
+                          name: {{ .Values.providerKubernetes.serviceAccount }}
+            patches:
+              - fromFieldPath: spec.parameters.id
+                toFieldPath: spec.providerConfigRef.name
+                type: FromCompositeFieldPath
+
+          - name: crossplaneKubernetesProvider
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                deletionPolicy: Orphan
+                forProvider:
+                  manifest:
+                    apiVersion: pkg.crossplane.io/v1
+                    kind: Provider
+                    metadata:
+                      name: provider-{{ .Values.providerKubernetes.name }}
+                    spec:
+                      package: ""
+                      runtimeConfigRef:
+                        name: {{ .Values.providerKubernetes.name }}-runtime-config
+            patches:
+              - fromFieldPath: spec.parameters.id
+                toFieldPath: spec.providerConfigRef.name
+                type: FromCompositeFieldPath
+              - fromFieldPath: spec.parameters.kubernetesProviderVersion
+                toFieldPath: spec.forProvider.manifest.spec.package
+                transforms:
+                  - string:
+                      fmt: "xpkg.upbound.io/crossplane-contrib/provider-kubernetes:%s"
+                      type: Format
+                    type: string
+                type: FromCompositeFieldPath
+
+          - name: crossplaneKubernetesProviderConfig
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                deletionPolicy: Orphan
+                forProvider:
+                  manifest:
+                    apiVersion: kubernetes.crossplane.io/v1alpha1
+                    kind: ProviderConfig
+                    metadata:
+                      name: {{ .Values.providerKubernetes.name }}-provider-config
+                    spec:
+                      credentials:
+                        source: InjectedIdentity
+            patches:
+              - fromFieldPath: spec.parameters.id
+                toFieldPath: spec.providerConfigRef.name
+                type: FromCompositeFieldPath
+          {{- end }}
+
+          {{ if .Values.providerHelm.enabled -}}
+          - name: crossplaneHelmProviderServiceAccount
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                deletionPolicy: Orphan
+                forProvider:
+                  manifest:
+                    apiVersion: v1
+                    kind: ServiceAccount
+                    metadata:
+                      name: {{ .Values.providerHelm.serviceAccount }}
+                      namespace: {{ .Values.crossplane.namespace }}
+            patches:
+              - fromFieldPath: spec.parameters.id
+                toFieldPath: spec.providerConfigRef.name
+                type: FromCompositeFieldPath
+
+          - name: crossplaneHelmProviderClusterRoleBinding
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                deletionPolicy: Orphan
+                forProvider:
+                  manifest:
+                    apiVersion: rbac.authorization.k8s.io/v1
+                    kind: ClusterRoleBinding
+                    metadata:
+                      name: {{ .Values.providerHelm.name }}-binding
+                    subjects:
+                      - kind: ServiceAccount
+                        name: {{ .Values.providerHelm.serviceAccount }}
+                        namespace: {{ .Values.crossplane.namespace }}
+                    roleRef:
+                      kind: ClusterRole
+                      name: cluster-admin
+                      apiGroup: rbac.authorization.k8s.io
+            patches:
+              - fromFieldPath: spec.parameters.id
+                toFieldPath: spec.providerConfigRef.name
+                type: FromCompositeFieldPath
+
+          - name: crossplaneHelmProviderRuntimeConfig
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                deletionPolicy: Orphan
+                forProvider:
+                  manifest:
+                    apiVersion: pkg.crossplane.io/v1beta1
+                    kind: DeploymentRuntimeConfig
+                    metadata:
+                      name: {{ .Values.providerHelm.name }}-runtime-config
+                    spec:
+                      deploymentTemplate:
+                        spec:
+                          replicas: 1
+                          selector: {}
+                          template: {}
+                      serviceAccountTemplate:
+                        metadata:
+                          name: {{ .Values.providerHelm.serviceAccount }}
+            patches:
+              - fromFieldPath: spec.parameters.id
+                toFieldPath: spec.providerConfigRef.name
+                type: FromCompositeFieldPath
+
+          - name: crossplaneHelmProvider
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                deletionPolicy: Orphan
+                forProvider:
+                  manifest:
+                    apiVersion: pkg.crossplane.io/v1
+                    kind: Provider
+                    metadata:
+                      name: provider-{{ .Values.providerHelm.name }}
+                    spec:
+                      package: ""
+                      runtimeConfigRef:
+                        name: {{ .Values.providerHelm.name }}-runtime-config
+            patches:
+              - fromFieldPath: spec.parameters.id
+                toFieldPath: spec.providerConfigRef.name
+                type: FromCompositeFieldPath
+              - fromFieldPath: spec.parameters.helmProviderVersion
+                toFieldPath: spec.forProvider.manifest.spec.package
+                transforms:
+                  - string:
+                      fmt: "xpkg.upbound.io/crossplane-contrib/provider-helm:%s"
+                      type: Format
+                    type: string
+                type: FromCompositeFieldPath
+
+          - name: crossplaneHelmProviderConfig
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                deletionPolicy: Orphan
+                forProvider:
+                  manifest:
+                    apiVersion: helm.crossplane.io/v1beta1
+                    kind: ProviderConfig
+                    metadata:
+                      name: {{ .Values.providerHelm.name }}-provider-config
+                    spec:
+                      credentials:
+                        source: InjectedIdentity
+            patches:
+              - fromFieldPath: spec.parameters.id
+                toFieldPath: spec.providerConfigRef.name
+                type: FromCompositeFieldPath
+          {{- end }}
+
+          {{ if .Values.argocd.enabled -}}
+          - name: argoCdAddon
+            base:
+              apiVersion: helm.crossplane.io/v1beta1
+              kind: Release
+              metadata:
+                annotations:
+                  crossplane.io/external-name: argocd
+              spec:
+                forProvider:
+                  chart:
+                    name: {{ .Values.argocd.name }}
+                    repository: https://argoproj.github.io/argo-helm
+                    version: {{ .Values.argocd.version }}
+                  namespace: {{ .Values.argocd.namespace }}
+                  values:
+                    dex:
+                      enabled: true
+                    redis-ha:
+                      enabled: true
+                    controller:
+                      replicas: 1 # Additional replicas will cause sharding of managed clusters across number of replicas.
+                      metrics:
+                        enabled: true
+                        service:
+                          annotations:
+                            prometheus.io/scrape: true
+                      env:
+                        - name: ARGOCD_K8S_CLIENT_QPS #required for Crossplane too many CRDs https://github.com/argoproj/argo-cd/pull/448
+                          value: "300"
+                    repoServer:
+                      autoscaling:
+                        enabled: true
+                        minReplicas: 1
+                      resources: # Adjust based on your specific use case (required for HPA)
+                        requests:
+                          cpu: "100m"
+                          memory: "256Mi"
+                        limits:
+                          cpu: "200m"
+                          memory: "512Mi"
+                      metrics:
+                        enabled: true
+                        service:
+                          annotations:
+                            prometheus.io/scrape: true
+                    applicationSet:
+                      replicaCount: 1 # The controller doesn't scale horizontally, is active-standby replicas
+                      metrics:
+                        enabled: true
+                        service:
+                          annotations:
+                            prometheus.io/scrape: true
+                    notifications:
+                      enabled: false
+                    server:
+                      autoscaling:
+                        enabled: true
+                        minReplicas: 1
+                      resources: # Adjust based on your specific use case (required for HPA)
+                        requests:
+                          cpu: "100m"
+                          memory: "256Mi"
+                        limits:
+                          cpu: "200m"
+                          memory: "512Mi"
+                      metrics:
+                        enabled: true
+                        service:
+                          annotations:
+                            prometheus.io/scrape: true
+                      service:
+                        type: "LoadBalancer"
+                        annotations:
+                          service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+                    configs:
+                      params:
+                        controller.repo.server.plaintext: "false"
+                        controller.repo.server.strict.tls: "false"
+                        controller.log.format: json
+                        controller.log.level: info
+                        server.insecure: "false"
+                        server.log.format: json
+                        server.log.level: info
+                        server.repo.server.plaintext: "false"
+                        server.repo.server.strict.tls: "false"
+                        server.dex.server.plaintext: "false"
+                        server.dex.server.strict.tls: "false"
+                        server.disable.auth: "false"
+                        server.tls.minversion: "1.2"
+                        server.tls.maxversion: "1.3"
+                        server.enable.proxy.extension: "false"
+                        reposerver.log.format: json
+                        reposerver.log.level: info
+                        reposerver.disable.tls: "false"
+                        reposerver.tls.minversion: "1.2"
+                        reposerver.tls.maxversion: "1.3"
+                        dexserver.disable.tls: "false"
+                      cm:
+                        admin.enabled: "true"
+                        users.anonymous.enabled: "false"
+                        kustomize.buildOptions: "--enable-helm"
+                        application.resourceTrackingMethod: "annotation" #use annotation for tracking required for Crossplane
+                        resource.exclusions: |
+                          - kinds:
+                            - ProviderConfigUsage
+                            apiGroups:
+                            - "*"
+                        resource.customizations: |
+                          "awsblueprints.io/*":
+                            health.lua: |
+                              health_status = {
+                                status = "Progressing",
+                                message = "Provisioning ..."
+                              }
+
+                              if obj.status == nil or obj.status.conditions == nil then
+                                return health_status
+                              end
+
+                              for i, condition in ipairs(obj.status.conditions) do
+                                if condition.type == "LastAsyncOperation" then
+                                  if condition.status == "False" then
+                                    health_status.status = "Degraded"
+                                    health_status.message = condition.message
+                                    return health_status
+                                  end
+                                end
+
+                                if condition.type == "Synced" then
+                                  if condition.status == "False" then
+                                    health_status.status = "Degraded"
+                                    health_status.message = condition.message
+                                    return health_status
+                                  end
+                                end
+
+                                if condition.type == "Ready" then
+                                  if condition.status == "True" then
+                                    health_status.status = "Healthy"
+                                    health_status.message = "Resource is up-to-date."
+                                    return health_status
+                                  end
+                                end
+                              end
+
+                              return health_status
+                          "*.upbound.io/*":
+                            health.lua: |
+                              health_status = {
+                                status = "Progressing",
+                                message = "Provisioning ..."
+                              }
+
+                              local function contains (table, val)
+                                for i, v in ipairs(table) do
+                                  if v == val then
+                                    return true
+                                  end
+                                end
+                                return false
+                              end
+
+                              local has_no_status = {
+                                "ProviderConfig",
+                                "ProviderConfigUsage"
+                              }
+
+                              if obj.status == nil or next(obj.status) == nil and contains(has_no_status, obj.kind) then
+                                health_status.status = "Healthy"
+                                health_status.message = "Resource is up-to-date."
+                                return health_status
+                              end
+
+                              if obj.status == nil or next(obj.status) == nil or obj.status.conditions == nil then
+                                if obj.kind == "ProviderConfig" and obj.status.users ~= nil then
+                                  health_status.status = "Healthy"
+                                  health_status.message = "Resource is in use."
+                                  return health_status
+                                end
+                                return health_status
+                              end
+
+                              if obj.status == nil or obj.status.conditions == nil then
+                                return health_status
+                              end
+
+                              for i, condition in ipairs(obj.status.conditions) do
+                                if condition.type == "LastAsyncOperation" then
+                                  if condition.status == "False" then
+                                    health_status.status = "Degraded"
+                                    health_status.message = condition.message
+                                    return health_status
+                                  end
+                                end
+
+                                if condition.type == "Synced" then
+                                  if condition.status == "False" then
+                                    health_status.status = "Degraded"
+                                    health_status.message = condition.message
+                                    return health_status
+                                  end
+                                end
+
+                                if condition.type == "Ready" then
+                                  if condition.status == "True" then
+                                    health_status.status = "Healthy"
+                                    health_status.message = "Resource is up-to-date."
+                                    return health_status
+                                  end
+                                end
+                              end
+
+                              return health_status
+                          "*.crossplane.io/*":
+                            health.lua: |
+                              health_status = {
+                                status = "Progressing",
+                                message = "Provisioning ..."
+                              }
+
+                              local function contains (table, val)
+                                for i, v in ipairs(table) do
+                                  if v == val then
+                                    return true
+                                  end
+                                end
+                                return false
+                              end
+
+                              local has_no_status = {
+                                "Composition",
+                                "CompositionRevision",
+                                "DeploymentRuntimeConfig",
+                                "ControllerConfig",
+                                "ProviderConfig",
+                                "ProviderConfigUsage"
+                              }
+
+                              if obj.status == nil or next(obj.status) == nil and contains(has_no_status, obj.kind) then
+                                health_status.status = "Healthy"
+                                health_status.message = "Resource is up-to-date."
+                                return health_status
+                              end
+
+                              if obj.status == nil or next(obj.status) == nil or obj.status.conditions == nil then
+                                if obj.kind == "ProviderConfig" and obj.status.users ~= nil then
+                                  health_status.status = "Healthy"
+                                  health_status.message = "Resource is in use."
+                                  return health_status
+                                end
+                                return health_status
+                              end
+
+                              if obj.status == nil or obj.status.conditions == nil then
+                                return health_status
+                              end
+
+                              for i, condition in ipairs(obj.status.conditions) do
+                                if condition.type == "LastAsyncOperation" then
+                                  if condition.status == "False" then
+                                    health_status.status = "Degraded"
+                                    health_status.message = condition.message
+                                    return health_status
+                                  end
+                                end
+
+                                if condition.type == "Synced" then
+                                  if condition.status == "False" then
+                                    health_status.status = "Degraded"
+                                    health_status.message = condition.message
+                                    return health_status
+                                  end
+                                end
+
+                                if condition.type == "Ready" then
+                                  if condition.status == "True" then
+                                    health_status.status = "Healthy"
+                                    health_status.message = "Resource is up-to-date."
+                                    return health_status
+                                  end
+                                end
+                              end
+
+                              return health_status
+                      rbac:
+                        create: true
+                        annotations: {}
+                        scopes: "[groups]"
+            patches:
+              - fromFieldPath: spec.parameters.id
+                toFieldPath: spec.providerConfigRef.name
+                type: FromCompositeFieldPath
+              - fromFieldPath: spec.parameters.argoCdVersion
+                toFieldPath: spec.forProvider.chart.version
+                type: FromCompositeFieldPath
+              - fromFieldPath: "status.atProvider.state"
+                toFieldPath: "status.eks.argoCdAddonReleaseStatus"
+                type: ToCompositeFieldPath
+          {{- end }}

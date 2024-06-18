@@ -1,0 +1,69 @@
+{{- if .Values.claim.create }}
+--- 
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.eks.name }}
+--- 
+apiVersion: {{ .Values.apiGroup }}/{{ .Values.apiVersion }}
+kind: Eks
+metadata:
+  name: {{ .Values.eks.name }}
+  namespace: {{ .Values.eks.name }}
+spec:
+  id: {{ .Values.eks.name }}
+  region: {{ .Values.eks.region }}
+
+  {{- if .Values.networking.createVpc }}
+  vpcCidr: {{ .Values.networking.vpcCidr }}
+  {{- if .Values.networking.createPublicSubnets }}
+  {{- range $i, $cidr := .Values.networking.publicSubnetCidrs }}
+  publicSubnet{{ $i }}Cidr: {{ $cidr.value }}
+  publicSubnet{{ $i }}Az: {{ $cidr.key }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.networking.createPrivateSubnets }}
+  {{- range $i, $cidr := .Values.networking.privateSubnetCidrs }}
+  privateSubnet{{ $i }}Cidr: {{ $cidr.value }}
+  privateSubnet{{ $i }}Az: {{ $cidr.key }}
+  {{- end }}
+  {{- end }}
+  {{- else }}
+  subnets:
+    {{- range .Values.networking.subnets }}
+    - {{ . }}
+    {{- end }}
+  {{- end }}
+
+  authenticationMode: {{ .Values.eks.authenticationMode }}
+  bootstrapClusterCreatorAdminPermissions: {{ .Values.eks.bootstrapClusterCreatorAdminPermissions }}
+
+  enabledClusterLogTypes:
+    {{- range .Values.eks.enabledClusterLogTypes }}
+    - {{ . }}
+    {{- end }}
+
+  endpointPrivateAccess: {{ .Values.eks.endpointPrivateAccess }}
+  endpointPublicAccess: {{ .Values.eks.endpointPublicAccess }}
+
+  iam:
+    clusterAdminRoleArn: {{ .Values.eks.iam.clusterAdminRoleArn }}
+    clusterAdminUserArn: {{ .Values.eks.iam.clusterAdminUserArn }}
+  
+  version: {{ .Values.eks.version }}
+
+  crossplaneVersion: {{ .Values.crossplane.version }}
+  upjetProviderVersion: {{ .Values.providerUpboundAws.version }}
+  kubernetesProviderVersion: {{ .Values.providerKubernetes.version }}
+  helmProviderVersion: {{ .Values.providerHelm.version }}
+
+  {{ if .Values.argocd.enabled -}}
+  argoCdVersion: {{ .Values.argocd.version }}
+  {{- end }}
+
+  deletionPolicy: {{ .Values.crossplane.deletionPolicy }}
+
+  providerConfigName: {{ .Values.claim.providerConfigName }}
+  writeConnectionSecretToRef:
+    name: {{ .Values.claim.writeConnectionSecretToName }}
+{{- end }}

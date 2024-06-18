@@ -1,0 +1,102 @@
+apiGroup: awsblueprints.io
+apiVersion: v1alpha1
+
+networking:
+  createVpc: true
+  vpcCidr: 10.0.0.0/16
+  createPublicSubnets: true
+  # Format for the publicSubnetCidrs is a list of CIDRs, where each subnet is a map with a,b,c keys being the availability zone of each subnet.
+  publicSubnetCidrs:
+    - a: 10.0.1.0/24
+    - b: 10.0.2.0/24
+    - c: 10.0.3.0/24
+  # If are going to create private subnets, you need to create public subnets as well, so the composition can create the NAT Gateway(s).
+  createPrivateSubnets: true
+  singleNatGateway: true
+  # In the case of NOT using a single NAT Gateway, the AZ selection and order should match the ones from public subnets.
+  privateSubnetCidrs:
+    - a: 10.0.11.0/24
+    - b: 10.0.12.0/24
+    - c: 10.0.13.0/24
+  # If the createVPC is set to false, the subnets must be provided with the subnetIDs for each AZ to provision the EKS cluster
+  subnets: []
+
+eks:
+  name: crossplane-blueprints
+  version: 1.29
+  authenticationMode: API_AND_CONFIG_MAP
+  bootstrapClusterCreatorAdminPermissions: true
+  enabledClusterLogTypes:
+    - api
+    - audit
+    - authenticator
+    - controllerManager
+    - scheduler
+  endpointPrivateAccess: true
+  endpointPublicAccess: true
+  iam:
+    clusterAdminRoleArn: "arn:aws:iam::759021108710:role/eks-admin-role"
+    clusterAdminUserArn: "arn:aws:iam::759021108710:user/eks-admin-user"
+  region: us-east-1
+
+prometheus:
+  enabled: true
+  name: kube-prometheus-stack
+  namespace: kube-prometheus-stack
+  version: 51.2.0
+  prometheusAdapter:
+    name: prometheus-adapter
+    namespace: prometheus-adapter
+    version: 4.10.0
+
+crossplane:
+  name: crossplane
+  namespace: crossplane-system
+  serviceAccount: crossplane-sa
+  version: 1.16.0
+  deletionPolicy: Delete
+
+providerUpboundAws:
+  enabled: true
+  name: upjet-aws
+  version: v1.7.0
+  families:
+    - eks
+    - ec2
+    - elasticache
+    - dynamodb
+    - iam
+    - kms
+    - lambda
+    - rds
+    - s3
+    - sns
+    - sqs
+    - vpc
+    - apigateway
+    - cloudwatch
+    - cloudwatchlogs
+    - cloudfront
+
+providerKubernetes:
+  enabled: true
+  name: kubernetes
+  version: v0.13.0
+  serviceAccount: kubernetes-provider-sa
+
+providerHelm:
+  enabled: true
+  name: helm
+  version: v0.18.1
+  serviceAccount: helm-provider-sa
+
+argocd:
+  enabled: true
+  name: argo-cd
+  namespace: argocd
+  version: 7.1.4
+
+claim:
+  create: true
+  providerConfigName: my-controlplane-cluster-provider-config
+  writeConnectionSecretToName: my-controlplane-cluster-kubeconfig

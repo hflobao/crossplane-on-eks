@@ -1,13 +1,13 @@
 apiVersion: apiextensions.crossplane.io/v1
 kind: CompositeResourceDefinition
 metadata:
-  name: xekss.awsblueprints.io
+  name: xekss.{{ .Values.apiGroup }}
 spec:
   defaultCompositionRef:
-    name: xeks.awsblueprints.io
+    name: xeks.{{ .Values.apiGroup }}
   connectionSecretKeys:
     - kubeconfig
-  group: awsblueprints.io
+  group: {{ .Values.apiGroup }}
   names:
     kind: XEks
     plural: xekss
@@ -15,7 +15,7 @@ spec:
     kind: Eks
     plural: ekss
   versions:
-    - name: v1alpha1
+    - name: {{ .Values.apiVersion }}
       served: true
       referenceable: true
       schema:
@@ -32,39 +32,31 @@ spec:
                     id:
                       type: string
                       description: ID of this Cluster that other objects will use to refer to it.
-                    providerConfigName:
-                      description: Name of the Crossplane ProviderConfig to use for provisioning resources.
-                      type: string
-                    region:
-                      description: AWS Region where resources will be deployed.
-                      type: string
                     authenticationMode:
                       description: Authentication mode for the EKS cluster.
                       type: string
-                      default: API
+                      default: {{ .Values.eks.authenticationMode }}
                     bootstrapClusterCreatorAdminPermissions:
-                      description: Whether or not to bootstrap the access config values to the EKS cluster. Default is true.
+                      description: Whether or not to bootstrap the access config values to the EKS cluster.
                       type: boolean
-                      default: true
+                      default: {{ .Values.eks.bootstrapClusterCreatorAdminPermissions }}
                     enabledClusterLogTypes:
                       description: List of the desired control plane logging to enable. For more information, see Amazon EKS Control Plane Logging.
                       type: array
                       items:
                         type: string
                       default:
-                        - api
-                        - audit
-                        - authenticator
-                        - controllerManager
-                        - scheduler
+                        {{- range .Values.eks.enabledClusterLogTypes }}
+                        - {{ . }}
+                        {{- end }}
                     endpointPrivateAccess:
-                      description: Whether the Amazon EKS private API server endpoint is enabled. Default is false.
+                      description: Whether the Amazon EKS private API server endpoint is enabled.
                       type: boolean
-                      default: false
+                      default: {{ .Values.eks.endpointPrivateAccess }}
                     endpointPublicAccess:
-                      description: Whether the Amazon EKS public API server endpoint is enabled. Default is true.
+                      description: Whether the Amazon EKS public API server endpoint is enabled.
                       type: boolean
-                      default: true
+                      default: {{ .Values.eks.endpointPublicAccess }}
                     iam:
                       type: object
                       description: IAM configuration to connect as ClusterAdmin.
@@ -75,31 +67,72 @@ spec:
                         clusterAdminUserArn:
                           description: The IAM User ARN to connect as ClusterAdmin.
                           type: string
+                    region:
+                      description: AWS Region where resources will be deployed.
+                      type: string
+                    {{- if .Values.networking.createVpc }}
+                    vpcCidr:
+                      description: The IPv4 CIDR block for the VPC.
+                      type: string
+                    {{- if .Values.networking.createPublicSubnets }}
+                    {{- range $i, $cidr := .Values.networking.publicSubnetCidrs }}
+                    publicSubnet{{ $i }}Cidr:
+                      description: The IPv4 CIDR block for the Public Subnet {{ $i }}.
+                      type: string
+                    publicSubnet{{ $i }}Az:
+                      description: The AZ for the Public Subnet {{ $i }}.
+                      type: string
+                    {{- end }}
+                    {{- end }}
+                    {{- if .Values.networking.createPrivateSubnets }}
+                    {{- range $i, $cidr := .Values.networking.privateSubnetCidrs }}
+                    privateSubnet{{ $i }}Cidr:
+                      description: The IPv4 CIDR block for the Private Subnet {{ $i }}.
+                      type: string
+                    privateSubnet{{ $i }}Az:
+                      description: The AZ for the Private Subnet {{ $i }}.
+                      type: string
+                    {{- end }}
+                    {{- end }}
+                    {{- else }}
                     subnets:
                       description: Subnets for the EKS cluster and node groups.
                       type: array
                       items:
                         type: string
+                    {{- end }}
                     version:
                       description: Kubernetes version for the EKS cluster.
                       type: string
-                      default: "1.29"
+                      default: {{ .Values.eks.version }}
                     crossplaneVersion:
                       description: Crossplane version to be deployed.
                       type: string
-                      default: "1.16.0"
+                      default: {{ .Values.crossplane.version }}
+                    {{- if .Values.providerUpboundAws.enabled }}
                     upjetProviderVersion:
                       description: Upjet Provider version to be deployed.
                       type: string
-                      default: "v1.5.0"
+                      default: {{ .Values.providerUpboundAws.version }}
+                    {{- end }}
+                    {{- if .Values.providerKubernetes.enabled }}
                     kubernetesProviderVersion:
                       description: Kubernetes Provider version to be deployed.
                       type: string
-                      default: "v0.13.0"
+                      default: {{ .Values.providerKubernetes.version }}
+                    {{- end }}
+                    {{- if .Values.providerHelm.enabled }}
                     helmProviderVersion:
                       description: Helm Provider version to be deployed.
                       type: string
-                      default: "v0.18.1"
+                      default: {{ .Values.providerHelm.version }}
+                    {{- end }}
+                    {{- if .Values.argocd.enabled }}
+                    argoCdVersion:
+                      description: ArgoCD Chart version to be deployed.
+                      type: string
+                      default: {{ .Values.argocd.version }}
+                    {{- end }}
                     writeConnectionSecretToRef:
                       description: Reference to a Secret where connection details should be written.
                       type: object
@@ -113,7 +146,10 @@ spec:
                       enum:
                         - Delete
                         - Orphan
-                      default: Delete
+                      default: {{ .Values.crossplane.deletionPolicy }}
+                    providerConfigName:
+                      description: Name of the Crossplane ProviderConfig to use for provisioning resources.
+                      type: string
             status:
               description: A Status represents the observed state
               properties:
