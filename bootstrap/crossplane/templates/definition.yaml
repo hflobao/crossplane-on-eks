@@ -10,7 +10,7 @@ spec:
   group: {{ .Values.apiGroup }}
   names:
     kind: XEKS
-    plural: XEKS
+    plural: xeks
   claimNames:
     kind: eks
     plural: eks
