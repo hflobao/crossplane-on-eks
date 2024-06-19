@@ -1,7 +1,7 @@
 apiVersion: apiextensions.crossplane.io/v1
 kind: CompositeResourceDefinition
 metadata:
-  name: xekss.{{ .Values.apiGroup }}
+  name: xeks.{{ .Values.apiGroup }}
 spec:
   defaultCompositionRef:
     name: xeks.{{ .Values.apiGroup }}
@@ -9,11 +9,11 @@ spec:
     - kubeconfig
   group: {{ .Values.apiGroup }}
   names:
-    kind: XEks
-    plural: xekss
+    kind: XEKS
+    plural: XEKS
   claimNames:
-    kind: Eks
-    plural: ekss
+    kind: eks
+    plural: eks
   versions:
     - name: {{ .Values.apiVersion }}
       served: true

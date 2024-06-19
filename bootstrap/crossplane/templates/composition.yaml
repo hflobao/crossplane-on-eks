@@ -9,7 +9,7 @@ spec:
   writeConnectionSecretsToNamespace: crossplane-system
   compositeTypeRef:
     apiVersion: {{ .Values.apiGroup }}/{{ .Values.apiVersion }}
-    kind: XEks
+    kind: XEKS
   mode: Pipeline
   pipeline:
     - step: patch-and-transform
