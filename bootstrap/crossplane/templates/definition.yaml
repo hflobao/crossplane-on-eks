@@ -7,7 +7,7 @@ spec:
     name: xeks.{{ .Values.apiGroup }}
   connectionSecretKeys:
     - kubeconfig
-  group: {{ .Values.apiGroup }}
+  group: {{ .Values.apiGroup | quote }}
   names:
     kind: XEKS
     plural: xeks
@@ -15,7 +15,7 @@ spec:
     kind: eks
     plural: eks
   versions:
-    - name: {{ .Values.apiVersion }}
+    - name: {{ .Values.apiVersion | quote }}
       served: true
       referenceable: true
       schema:
@@ -35,7 +35,7 @@ spec:
                     authenticationMode:
                       description: Authentication mode for the EKS cluster.
                       type: string
-                      default: {{ .Values.eks.authenticationMode }}
+                      default: "{{ .Values.eks.authenticationMode }}"
                     bootstrapClusterCreatorAdminPermissions:
                       description: Whether or not to bootstrap the access config values to the EKS cluster.
                       type: boolean
@@ -47,7 +47,7 @@ spec:
                         type: string
                       default:
                         {{- range .Values.eks.enabledClusterLogTypes }}
-                        - {{ . }}
+                        - "{{ . }}"
                         {{- end }}
                     endpointPrivateAccess:
                       description: Whether the Amazon EKS private API server endpoint is enabled.
@@ -104,34 +104,34 @@ spec:
                     version:
                       description: Kubernetes version for the EKS cluster.
                       type: string
-                      default: {{ .Values.eks.version }}
+                      default: "{{ .Values.eks.version }}"
                     crossplaneVersion:
                       description: Crossplane version to be deployed.
                       type: string
-                      default: {{ .Values.crossplane.version }}
+                      default: "{{ .Values.crossplane.version }}"
                     {{- if .Values.providerUpboundAws.enabled }}
                     upjetProviderVersion:
                       description: Upjet Provider version to be deployed.
                       type: string
-                      default: {{ .Values.providerUpboundAws.version }}
+                      default: "{{ .Values.providerUpboundAws.version }}"
                     {{- end }}
                     {{- if .Values.providerKubernetes.enabled }}
                     kubernetesProviderVersion:
                       description: Kubernetes Provider version to be deployed.
                       type: string
-                      default: {{ .Values.providerKubernetes.version }}
+                      default: "{{ .Values.providerKubernetes.version }}"
                     {{- end }}
                     {{- if .Values.providerHelm.enabled }}
                     helmProviderVersion:
                       description: Helm Provider version to be deployed.
                       type: string
-                      default: {{ .Values.providerHelm.version }}
+                      default: "{{ .Values.providerHelm.version }}"
                     {{- end }}
                     {{- if .Values.argocd.enabled }}
                     argoCdVersion:
                       description: ArgoCD Chart version to be deployed.
                       type: string
-                      default: {{ .Values.argocd.version }}
+                      default: "{{ .Values.argocd.version }}"
                     {{- end }}
                     writeConnectionSecretToRef:
                       description: Reference to a Secret where connection details should be written.
@@ -146,7 +146,7 @@ spec:
                       enum:
                         - Delete
                         - Orphan
-                      default: {{ .Values.crossplane.deletionPolicy }}
+                      default: "{{ .Values.crossplane.deletionPolicy }}"
                     providerConfigName:
                       description: Name of the Crossplane ProviderConfig to use for provisioning resources.
                       type: string
